@@ -1,5 +1,6 @@
 package com.bd151876.project1;
 import com.example.bigdata.SumCount;
+import org.apache.commons.math3.optim.linear.LinearObjectiveFunction;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
@@ -15,6 +16,8 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
 import java.io.IOException;
+import java.util.Objects;
+
 public class NycAccidents extends Configured implements Tool {
     public static void main(String[] args) throws Exception {
         int res = ToolRunner.run(new NycAccidents(), args);
@@ -28,15 +31,15 @@ public class NycAccidents extends Configured implements Tool {
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
-        job.setMapperClass(NycAccidents.NycAccidentsMapper.class);
+        job.setMapperClass(NycAccidentsMapper.class);
 //        job.setCombinerClass(NycAccidents.AvgSizeStationCombiner.class);
-        job.setReducerClass(NycAccidents.NycAccidentsReducer.class);
+        job.setReducerClass(NycAccidentsReducer.class);
 
-        job.setMapOutputKeyClass(Text.class);
-        job.setMapOutputValueClass(Text.class);
+        job.setMapOutputKeyClass(MapperKey.class);
+        job.setMapOutputValueClass(MapperVal.class);
 
         job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(DoubleWritable.class);
+        job.setOutputValueClass(Text.class);
         return job.waitForCompletion(true) ? 0 : 1;
     }
 
@@ -46,7 +49,7 @@ public class NycAccidents extends Configured implements Tool {
         private final MapperKey key3 = new MapperKey();
         private final MapperVal value = new MapperVal();
         Boolean[] streets_to_send = {Boolean.FALSE, Boolean.FALSE, Boolean.FALSE};
-        int zipCode;
+        String zipCode;
         String onStreetName;
         String crossStreetName;
         String offStreetName;
@@ -71,20 +74,26 @@ public class NycAccidents extends Configured implements Tool {
                     int i = 0;
 
                     for (String word : line.split(",")) {
-                        if (i == 2) { zipCode = Integer.parseInt(word); } // zip_code
+                        if (i == 0) {
+                            if (Integer.parseInt(word.split("/")[2]) < 2012) {return;}
+                        } // data
+                        if (i == 2) {
+                            zipCode = word;
+                            if (Objects.equals(word, "")) {return;}
+                        } // zip_code
                         if (i == 6) {
                             onStreetName = word;
-                            key1.set(new Text(onStreetName), new IntWritable(zipCode));
+                            key1.set(new Text(onStreetName), new Text(zipCode));
                             streets_to_send[0] = Boolean.TRUE;
                         } // on_street_name
                         if (i == 7) {
                             crossStreetName = word;
-                            key2.set(new Text(onStreetName), new IntWritable(zipCode));
+                            key2.set(new Text(onStreetName), new Text(zipCode));
                             streets_to_send[1] = Boolean.TRUE;
                         } // cross_street_name
                         if (i == 8) {
                             offStreetName = word;
-                            key3.set(new Text(onStreetName), new IntWritable(zipCode));
+                            key3.set(new Text(onStreetName), new Text(zipCode));
                             streets_to_send[2] = Boolean.TRUE;
                         } // off_street_name
                         if (i == 9) {
@@ -122,7 +131,6 @@ public class NycAccidents extends Configured implements Tool {
                         i++;
                     }
                     value.set(
-                        new IntWritable(totalKilledInjured),
                         new IntWritable(pedestrians),
                         new IntWritable(cyclist),
                         new IntWritable(motorist),
@@ -136,30 +144,65 @@ public class NycAccidents extends Configured implements Tool {
             } catch ( Exception e) {
                 e.printStackTrace();
             }
-        }w
+        }
     }
 
-    public static class NycAccidentsReducer extends Reducer<MapperKey, Iterable<MapperVal>, Text, DoubleWritable> {
+
+    public static class NycAccidentsReducer extends Reducer<MapperKey, MapperVal, Text, Text> {
+        int total;
+        int pedestrians;
+        int cyclist;
+        int motorist;
+        int killed;
+        int injured;
+
+        @Override
         public void reduce(MapperKey key, Iterable<MapperVal> values, Context context) throws IOException, InterruptedException {
-            Text resultKey = new Text("stats for  " + key.getStreet() + " street in '" + key.getZipCode() + "' post area was: ");
-            context.write(resultKey, new DoubleWritable(0));
+            total = 0;
+            pedestrians = 0;
+            cyclist = 0;
+            motorist = 0;
+            killed = 0;
+            injured = 0;
+//            Text resultKey = new Text("stats for  " + key.getStreet() + " street in '" + key.getZipCode() + "' post area was: ");
+            Text resultKey = new Text(key.getStreet() + " " + key.getZipCode() + " ");
+            for (MapperVal val : values) {
+                pedestrians += val.getPedestrians().get();
+                cyclist += val.getCyclist().get();
+                motorist += val.getMotorist().get();
+                killed += val.getKilled().get();
+                injured += val.getInjured().get();
+                total += killed + injured;
+            }
+            Text result = new Text(
+                String.join(" ", new String[] {
+                        String.valueOf(pedestrians),
+                        String.valueOf(cyclist),
+                        String.valueOf(motorist),
+                        String.valueOf(killed),
+                        String.valueOf(injured),
+                        String.valueOf(total)
+                    }
+                )
+            );
+            context.write(resultKey, result);
 
         }
     }
 
-    public static class NycAccidentsCombiner extends Reducer<Text, SumCount, Text, SumCount> {
+    public static class NycAccidentsCombiner extends Reducer<MapperKey, MapperVal, MapperKey, SumCount> {
 
-        private final SumCount sum = new SumCount(0.0d, 0);
+        private final MapperVal sum = new MapperVal();
 
         @Override
-        public void reduce(Text key, Iterable<SumCount> values, Context context) throws IOException, InterruptedException {
+        public void reduce(MapperKey key, Iterable<MapperVal> values, Context context) throws IOException, InterruptedException {
 
-            sum.set(new DoubleWritable(0.0d), new IntWritable(0));
+//            sum.set(new DoubleWritable(0.0d), new IntWritable(0));
 
-            for (SumCount val : values) {
-                sum.addSumCount(val);
+            for (MapperVal val : values) {
+                sum.add(val);
             }
-            context.write(key, sum);
+//            context.write(key, sum);
         }
     }
 }

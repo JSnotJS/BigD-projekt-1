@@ -11,22 +11,22 @@ import java.io.IOException;
 
 public class MapperKey implements WritableComparable<MapperKey> {
     Text street;
-    IntWritable zip_code;
+    Text zip_code;
 
     public MapperKey() {
-        set(new Text(), new IntWritable());
+        set(new Text(), new Text());
     }
-    public MapperKey(String street, Integer zip_code) {
-        set(new Text(street), new IntWritable(zip_code));
+    public MapperKey(String street, String zip_code) {
+        set(new Text(street), new Text(zip_code));
     }
-    public void set(Text street, IntWritable zip_code) {
+    public void set(Text street, Text zip_code) {
         this.street = street;
         this.zip_code = zip_code;
     }
     public Text getStreet() {
         return street;
     }
-    public IntWritable getZipCode() {
+    public Text getZipCode() {
         return zip_code;
     }
     @Override
